@@ -101,23 +101,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let starting_dir_clone = Arc::clone(&starting_dir);
     thread::spawn(move || {
         *contents_clone.lock().unwrap() = get_wrapped_contents(&starting_dir_clone.lock().unwrap());
-        tx.send(1).unwrap();
+        tx.send(0).unwrap();
     });
 
+    let mut dot_pos = 0;
+    let mut dot_fwd = true;
     loop {
         terminal
             .draw(|f| {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
+                    .constraints(
+                        [
+                            Constraint::Length(3),
+                            Constraint::Length((f.size().height - 6) / 2),
+                            Constraint::Length(3),
+                        ]
+                        .as_ref(),
+                    )
                     .split(f.size());
-                let block = Paragraph::new("scanning...")
-                    .block(Block::default().title(" rsdu ").borders(Borders::ALL));
+                let block = Block::default().title(" rsdu ").borders(Borders::ALL);
                 f.render_widget(block, chunks[0]);
+                let blank1 = Block::default();
+                f.render_widget(blank1, chunks[1]);
+                let msg = Paragraph::new(
+                    "Scanning".to_string()
+                        + &" ".repeat(dot_pos)
+                        + "..."
+                        + &" ".repeat(6 - dot_pos),
+                )
+                .alignment(tui::layout::Alignment::Center)
+                .block(Block::default());
+                f.render_widget(msg, chunks[2]);
             })
             .unwrap();
-        match rx.recv().unwrap() {
-            _ => break,
+        if dot_pos == 6 {
+            dot_fwd = false;
+        } else if dot_pos == 0 {
+            dot_fwd = true;
+        }
+        if dot_fwd {
+            dot_pos += 1;
+        } else {
+            dot_pos -= 1;
+        }
+        thread::sleep(std::time::Duration::from_millis(150));
+        match rx.try_recv() {
+            Ok(_) => break,
+            Err(_) => {}
         }
     }
 
@@ -249,7 +280,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         joined = contents_access.join(&*drawn_dir_access).unwrap();
                         state.select(match joined {
                             PathInfo::Folder(.., s) => Some(*s as usize),
-                            PathInfo::File(..) => Some(panic!()),
+                            PathInfo::File(..) => panic!(),
                         });
                     }
                     Key::Char('r') => {
@@ -351,52 +382,75 @@ fn get_starting_dir() -> Result<std::path::PathBuf, io::Error> {
 }
 
 fn get_wrapped_contents(dir: &std::path::Path) -> PathInfo {
-    let contents = get_contents(dir).unwrap();
+    let threads = Arc::new(Mutex::new(1));
+    let max_threads = num_cpus::get();
+    let contents = get_contents(dir, threads, max_threads).unwrap();
     PathInfo::Folder(sum_contents(&contents), contents, 0)
 }
 
 fn get_contents(
     dir: &std::path::Path,
+    threads: Arc<Mutex<usize>>,
+    max_threads: usize,
 ) -> Result<BTreeMap<std::ffi::OsString, PathInfo>, io::Error> {
-    let mut tree_map = BTreeMap::new();
+    let contents = Arc::new(Mutex::new(BTreeMap::new()));
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => return Err(e),
+        Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => return Ok(BTreeMap::new()),
+        Err(e) => panic!("{}", e),
     };
 
-    // TODO: multithread this and investigate ways of improving performance
+    let mut handlers = Vec::new();
 
     for entry in entries {
-        let safe_entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => return Err(e),
+        let contents_clone = Arc::clone(&contents);
+        // TODO: handle errors in threads
+        let threads_depth_clone = Arc::clone(&threads);
+        let task = move || {
+            let safe_entry = entry.unwrap();
+            let metadata = std::fs::symlink_metadata(safe_entry.path()).unwrap();
+            if metadata.is_dir() {
+                let sub_contents =
+                    get_contents(&safe_entry.path(), threads_depth_clone, max_threads).unwrap();
+                contents_clone.lock().unwrap().insert(
+                    std::ffi::OsString::from(
+                        safe_entry.path().components().last().unwrap().as_os_str(),
+                    ),
+                    PathInfo::Folder(
+                        sum_contents(&sub_contents) + metadata.len(),
+                        sub_contents,
+                        0,
+                    ),
+                );
+            } else {
+                contents_clone.lock().unwrap().insert(
+                    std::ffi::OsString::from(
+                        safe_entry.path().components().last().unwrap().as_os_str(),
+                    ),
+                    PathInfo::File(metadata.len()),
+                );
+            };
         };
-        let metadata = match safe_entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(e) => return Err(e),
-        };
-        if safe_entry.path().is_dir() {
-            match get_contents(&safe_entry.path()) {
-                Ok(contents) => {
-                    let _ = tree_map.insert(
-                        std::ffi::OsString::from(
-                            safe_entry.path().components().last().unwrap().as_os_str(),
-                        ),
-                        PathInfo::Folder(sum_contents(&contents) + metadata.len(), contents, 0),
-                    );
-                }
-                Err(e) => return Err(e),
-            }
+        if *threads.lock().unwrap() < max_threads {
+            let threads_breadth_clone = Arc::clone(&threads);
+            handlers.push(thread::spawn(move || {
+                *threads_breadth_clone.lock().unwrap() += 1;
+                task();
+                *threads_breadth_clone.lock().unwrap() -= 1;
+            }));
         } else {
-            tree_map.insert(
-                std::ffi::OsString::from(
-                    safe_entry.path().components().last().unwrap().as_os_str(),
-                ),
-                PathInfo::File(metadata.len()),
-            );
+            task();
         }
     }
-    Ok(tree_map)
+
+    for handler in handlers {
+        match handler.join() {
+            Ok(_) => {}
+            Err(_) => {}
+        };
+    }
+
+    Ok(Arc::try_unwrap(contents).unwrap().into_inner().unwrap())
 }
 
 fn sum_contents(contents: &BTreeMap<std::ffi::OsString, PathInfo>) -> u64 {
@@ -424,13 +478,14 @@ fn pad_and_prettify_bytes(bytes: &u64) -> String {
 }
 
 fn size_bar(child_bytes: &u64, parent_bytes: &u64) -> String {
-    let bar_components = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
+    let bar_components = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
     let fraction = *child_bytes as f64 / *parent_bytes as f64;
-    let floored_frac = (fraction * 8_f64).floor();
-    // TODO: Double check this math
+    let floored_frac = (fraction * 8_f64).floor().max(0_f64);
     let mut bar = "█".repeat(floored_frac as usize)
-        + &bar_components[((fraction - (floored_frac / 8_f64)) * 32_f64).round() as usize]
-            .to_string();
+        + &bar_components[(((fraction - (floored_frac / 8_f64)) * 64_f64).round() as usize)
+            .min(8)
+            .max(0)]
+        .to_string();
     bar += &" ".repeat((7 - floored_frac as usize).min(8));
     " [".to_string() + &bar + "] "
 }
