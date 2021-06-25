@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{self, Write},
     iter::FromIterator,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
 };
@@ -70,7 +71,7 @@ impl PathInfo {
     }
 }
 
-fn join_path_to_vec(path: &std::path::Path, vec: Vec<OsString>) -> std::path::PathBuf {
+fn join_path_to_vec(path: &Path, vec: Vec<OsString>) -> PathBuf {
     let mut tmp_path = path.to_path_buf();
     for comp in vec {
         tmp_path = tmp_path.join(comp);
@@ -146,6 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             dot_pos -= 1;
         }
+        // TODO: Determine better way of terminating immediately without having to wait for last
+        // sleep
         thread::sleep(std::time::Duration::from_millis(50));
         match rx.try_recv() {
             Ok(_) => break,
@@ -334,26 +337,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_starting_dir() -> Result<std::path::PathBuf, io::Error> {
+fn get_starting_dir() -> Result<PathBuf, io::Error> {
     let current_dir = match env::current_dir() {
         Ok(dir) => dir,
-        Err(e) => panic!("{}", e),
+        Err(e) => return Err(e),
     };
     let args = env::args().collect::<Vec<String>>();
-    if args.len() == 1 {
-        Ok(current_dir)
-    } else if args.len() == 2 {
-        if &args[1][0..0] != "/" {
-            Ok(fs::canonicalize(current_dir.join(&std::path::Path::new(&args[1]))).unwrap())
-        } else {
-            Ok(fs::canonicalize(std::path::PathBuf::from(&args[1])).unwrap())
-        }
-    } else {
-        Err(io::Error::new(io::ErrorKind::InvalidInput, ""))
+    match args.len() {
+        1 => Ok(current_dir),
+        2 => Ok(PathBuf::from(&args[1])),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "")),
     }
 }
 
-fn get_wrapped_contents(dir: &std::path::Path) -> PathInfo {
+fn get_wrapped_contents(dir: &Path) -> PathInfo {
     let threads = Arc::new(Mutex::new(1));
     let max_threads = num_cpus::get();
     let contents = get_contents(dir, threads, max_threads).unwrap();
@@ -361,7 +358,7 @@ fn get_wrapped_contents(dir: &std::path::Path) -> PathInfo {
 }
 
 fn get_contents(
-    dir: &std::path::Path,
+    dir: &Path,
     threads: Arc<Mutex<usize>>,
     max_threads: usize,
 ) -> Result<BTreeMap<OsString, PathInfo>, io::Error> {
