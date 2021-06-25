@@ -1,16 +1,17 @@
 use std::{
     collections::BTreeMap,
-    env, fs,
-    io::{self, stdin, stdout, Write},
+    env,
+    ffi::OsString,
+    fs,
+    io::{self, Write},
     iter::FromIterator,
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex},
     thread,
 };
-use termion::event::{Event, Key};
+use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
-use tui::backend::TermionBackend;
-use tui::layout::{Constraint, Direction, Layout};
+use tui::layout::{Alignment, Constraint, Direction, Layout};
 use tui::style::{Color, Modifier, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
@@ -19,7 +20,7 @@ use tui::Terminal;
 #[derive(Debug)]
 enum PathInfo {
     File(u64),
-    Folder(u64, BTreeMap<std::ffi::OsString, PathInfo>, u64),
+    Folder(u64, BTreeMap<OsString, PathInfo>, u64),
 }
 
 impl PathInfo {
@@ -30,7 +31,7 @@ impl PathInfo {
         }
     }
 
-    fn join(&mut self, vec: &Vec<std::ffi::OsString>) -> Result<&mut PathInfo, io::Error> {
+    fn join(&mut self, vec: &Vec<OsString>) -> Result<&mut PathInfo, io::Error> {
         let mut curr_res = self;
         for comp in vec {
             match curr_res {
@@ -50,14 +51,14 @@ impl PathInfo {
         }
     }
 
-    fn contents(&self) -> Result<&BTreeMap<std::ffi::OsString, PathInfo>, io::Error> {
+    fn contents(&self) -> Result<&BTreeMap<OsString, PathInfo>, io::Error> {
         match self {
             PathInfo::Folder(_, c, ..) => Ok(c),
             PathInfo::File(..) => Err(io::Error::new(io::ErrorKind::Other, "")),
         }
     }
 
-    fn sorted(&self) -> Result<Vec<(&std::ffi::OsString, &PathInfo)>, io::Error> {
+    fn sorted(&self) -> Result<Vec<(&OsString, &PathInfo)>, io::Error> {
         match self {
             PathInfo::Folder(_, c, _) => {
                 let mut contents_vec = Vec::from_iter(c.iter());
@@ -69,7 +70,7 @@ impl PathInfo {
     }
 }
 
-fn join_path_to_vec(path: &std::path::Path, vec: Vec<std::ffi::OsString>) -> std::path::PathBuf {
+fn join_path_to_vec(path: &std::path::Path, vec: Vec<OsString>) -> std::path::PathBuf {
     let mut tmp_path = path.to_path_buf();
     for comp in vec {
         tmp_path = tmp_path.join(comp);
@@ -79,9 +80,9 @@ fn join_path_to_vec(path: &std::path::Path, vec: Vec<std::ffi::OsString>) -> std
 
 // TODO: erase window on quit
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdout = stdout().into_raw_mode().unwrap();
+    let mut stdout = io::stdout().into_raw_mode().unwrap();
     write!(stdout, "{}", termion::clear::All).unwrap();
-    let backend = TermionBackend::new(stdout);
+    let backend = tui::backend::TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend).unwrap();
 
     let starting_dir = match get_starting_dir() {
@@ -89,14 +90,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => panic!("{}", e),
     };
 
-    let mut state = ListState::default();
-    state.select(Some(0));
+    let state = Arc::new(Mutex::new(ListState::default()));
+    state.lock().unwrap().select(Some(0));
 
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::channel();
 
     let contents = Arc::new(Mutex::new(PathInfo::Folder(0, BTreeMap::new(), 0)));
     let contents_clone = Arc::clone(&contents);
-    let dir: Vec<std::ffi::OsString> = vec![];
+    let dir: Vec<OsString> = vec![];
     let current_dir = Arc::new(Mutex::new(dir));
     let starting_dir_clone = Arc::clone(&starting_dir);
     thread::spawn(move || {
@@ -130,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         + "..."
                         + &" ".repeat(6 - dot_pos),
                 )
-                .alignment(tui::layout::Alignment::Center)
+                .alignment(Alignment::Center)
                 .block(Block::default());
                 f.render_widget(msg, chunks[2]);
             })
@@ -145,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             dot_pos -= 1;
         }
-        thread::sleep(std::time::Duration::from_millis(150));
+        thread::sleep(std::time::Duration::from_millis(50));
         match rx.try_recv() {
             Ok(_) => break,
             Err(_) => {}
@@ -155,160 +156,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let contents_clone = Arc::clone(&contents);
     let current_dir_clone = Arc::clone(&current_dir);
     let starting_dir_clone = Arc::clone(&starting_dir);
+    let state_clone = Arc::clone(&state);
 
-    terminal
-        .draw(|f| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-                .split(f.size());
-            let mut items: Vec<ListItem> = vec![];
-            let mut contents_access = contents_clone.lock().unwrap();
-            let joined_contents = contents_access
-                .join(&*current_dir_clone.lock().unwrap())
-                .unwrap();
-            let display_dir = join_path_to_vec(
-                &*starting_dir_clone.lock().unwrap(),
-                (current_dir_clone.lock().unwrap()).clone(),
-            )
-            .canonicalize()
-            .unwrap();
-            let display_dir_string = String::from(display_dir.to_string_lossy());
-            let block = Paragraph::new(display_dir_string)
-                .block(Block::default().title(" rsdu ").borders(Borders::ALL));
-            f.render_widget(block, chunks[0]);
-
-            for (path, info) in joined_contents.sorted().unwrap() {
-                items.push(ListItem::new(Spans::from(Span::raw(
-                    String::from(pad_and_prettify_bytes(&info.size()))
-                        + &size_bar(&info.size(), &joined_contents.size())
-                        + &path.as_os_str().to_string_lossy()
-                        + match info {
-                            PathInfo::Folder(..) => "/",
-                            PathInfo::File(..) => "",
-                        },
-                ))));
-            }
-            let paths = List::new(items)
-                .block(Block::default().borders(Borders::ALL))
-                .highlight_style(
-                    Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                );
-            f.render_stateful_widget(paths, chunks[1], &mut state);
-        })
-        .unwrap();
-
-    let stdin = stdin();
-    let _dir = Arc::clone(&current_dir);
-    for event in stdin.events() {
-        match event.unwrap() {
-            Event::Key(key) => {
-                match key {
-                    // TODO: implement ctrl + u and ctrl + d for quicker movement, e.g.: Key::Ctrl('h')
-                    // TODO: implement deletion with confirmation
-                    // TODO; implement trashing with the give `trash` command found on the shell's path
-                    // TODO; implement selection and application of deletion and trashing commands
-                    // to all selected files
-                    Key::Char('q') => break,
-                    Key::Char('j') | Key::Down => {
-                        let dir_len = (&contents_clone)
-                            .lock()
-                            .unwrap()
-                            .join(&*current_dir_clone.lock().unwrap())
-                            .unwrap()
-                            .contents()
-                            .unwrap()
-                            .len();
-                        if dir_len != 0 {
-                            let new_state = (state.selected().unwrap() as isize + 1)
-                                .rem_euclid(dir_len as isize)
-                                as usize;
-                            state.select(Some(new_state));
-                        }
-                    }
-                    Key::Char('k') | Key::Up => {
-                        let dir_len = (&contents_clone)
-                            .lock()
-                            .unwrap()
-                            .join(&*current_dir_clone.lock().unwrap())
-                            .unwrap()
-                            .contents()
-                            .unwrap()
-                            .len();
-                        if dir_len != 0 {
-                            let new_state = (state.selected().unwrap() as isize - 1)
-                                .rem_euclid(dir_len as isize)
-                                as usize;
-                            state.select(Some(new_state));
-                        }
-                    }
-                    Key::Char('l') | Key::Right => {
-                        let mut drawn_dir_access = current_dir_clone.lock().unwrap();
-                        let mut contents_access = (&contents_clone).lock().unwrap();
-                        let joined = contents_access.join(&*drawn_dir_access).unwrap();
-                        let sorted = joined.sorted().unwrap();
-                        let (target_os_string, info) =
-                            sorted.iter().nth(state.selected().unwrap()).unwrap();
-                        match info {
-                            PathInfo::Folder(..) => {
-                                (*drawn_dir_access)
-                                    .push(std::ffi::OsString::from(target_os_string));
-                                state.select(match joined {
-                                    PathInfo::Folder(.., mut l) => Some(l as usize),
-                                    PathInfo::File(..) => panic!(),
-                                });
-                            }
-                            PathInfo::File(..) => {}
-                        }
-                    }
-                    Key::Char('h') | Key::Left => {
-                        let mut drawn_dir_access = current_dir_clone.lock().unwrap();
-                        let mut contents_access = (&contents_clone).lock().unwrap();
-                        let mut joined = contents_access.join(&*drawn_dir_access).unwrap();
-                        match joined {
-                            PathInfo::Folder(.., ref mut s) => {
-                                *s = state.selected().unwrap() as u64;
-                                // TODO: make this work
-                                // println!("{}", s);
-                                // println!("{}", state.selected().unwrap());
-                            }
-                            PathInfo::File(..) => panic!(),
-                        }
-                        (*drawn_dir_access).pop();
-                        joined = contents_access.join(&*drawn_dir_access).unwrap();
-                        state.select(match joined {
-                            PathInfo::Folder(.., s) => Some(*s as usize),
-                            PathInfo::File(..) => panic!(),
-                        });
-                    }
-                    Key::Char('r') => {
-                        let drawn_dir_clone = current_dir_clone.lock().unwrap().clone();
-                        let mut contents_access = (&contents_clone).lock().unwrap();
-                        let joined = contents_access.join(&drawn_dir_clone).unwrap();
-                        *joined = get_wrapped_contents(&mut join_path_to_vec(
-                            &starting_dir_clone.lock().unwrap(),
-                            drawn_dir_clone,
-                        ));
-                    }
-                    Key::Char('g') => state.select(Some(0)),
-                    Key::Char('G') => {
-                        let dir_len = (&contents_clone)
-                            .lock()
-                            .unwrap()
-                            .join(&*current_dir_clone.lock().unwrap())
-                            .unwrap()
-                            .contents()
-                            .unwrap()
-                            .len();
-                        state.select(Some(dir_len - 1));
-                    }
-                    _ => (),
-                }
-            }
-            _ => (),
-        };
+    let mut draw = move || {
         terminal
             .draw(|f| {
                 let chunks = Layout::default()
@@ -349,9 +199,131 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .fg(Color::Blue)
                             .add_modifier(Modifier::BOLD),
                     );
-                f.render_stateful_widget(paths, chunks[1], &mut state);
+                f.render_stateful_widget(paths, chunks[1], &mut state_clone.lock().unwrap());
             })
             .unwrap();
+    };
+
+    draw();
+
+    let contents_clone = Arc::clone(&contents);
+    let current_dir_clone = Arc::clone(&current_dir);
+    let starting_dir_clone = Arc::clone(&starting_dir);
+    let state_clone = Arc::clone(&state);
+
+    let stdin = io::stdin();
+    let _dir = Arc::clone(&current_dir);
+    for event in stdin.events() {
+        match event.unwrap() {
+            termion::event::Event::Key(key) => {
+                match key {
+                    // TODO: implement ctrl + u and ctrl + d for quicker movement, e.g.: Key::Ctrl('h')
+                    // TODO: implement deletion with confirmation
+                    // TODO; implement trashing with the give `trash` command found on the shell's path
+                    // TODO; implement selection and application of deletion and trashing commands
+                    // to all selected files
+                    Key::Char('q') => break,
+                    Key::Char('j') | Key::Down => {
+                        let dir_len = (&contents_clone)
+                            .lock()
+                            .unwrap()
+                            .join(&*current_dir_clone.lock().unwrap())
+                            .unwrap()
+                            .contents()
+                            .unwrap()
+                            .len();
+                        if dir_len != 0 {
+                            let new_state =
+                                (state_clone.lock().unwrap().selected().unwrap() as isize + 1)
+                                    .rem_euclid(dir_len as isize)
+                                    as usize;
+                            state_clone.lock().unwrap().select(Some(new_state));
+                        }
+                    }
+                    Key::Char('k') | Key::Up => {
+                        let dir_len = (&contents_clone)
+                            .lock()
+                            .unwrap()
+                            .join(&*current_dir_clone.lock().unwrap())
+                            .unwrap()
+                            .contents()
+                            .unwrap()
+                            .len();
+                        if dir_len != 0 {
+                            let new_state =
+                                (state_clone.lock().unwrap().selected().unwrap() as isize - 1)
+                                    .rem_euclid(dir_len as isize)
+                                    as usize;
+                            state_clone.lock().unwrap().select(Some(new_state));
+                        }
+                    }
+                    Key::Char('l') | Key::Right => {
+                        let mut drawn_dir_access = current_dir_clone.lock().unwrap();
+                        let mut contents_access = (&contents_clone).lock().unwrap();
+                        let joined = contents_access.join(&*drawn_dir_access).unwrap();
+                        let sorted = joined.sorted().unwrap();
+                        let (target_os_string, info) = sorted
+                            .iter()
+                            .nth(state_clone.lock().unwrap().selected().unwrap())
+                            .unwrap();
+                        match info {
+                            PathInfo::Folder(..) => {
+                                (*drawn_dir_access).push(OsString::from(target_os_string));
+                                state_clone.lock().unwrap().select(match joined {
+                                    PathInfo::Folder(.., mut l) => Some(l as usize),
+                                    PathInfo::File(..) => panic!(),
+                                });
+                            }
+                            PathInfo::File(..) => {}
+                        }
+                    }
+                    Key::Char('h') | Key::Left => {
+                        let mut drawn_dir_access = current_dir_clone.lock().unwrap();
+                        let mut contents_access = (&contents_clone).lock().unwrap();
+                        let mut joined = contents_access.join(&*drawn_dir_access).unwrap();
+                        match joined {
+                            PathInfo::Folder(.., ref mut s) => {
+                                *s = state_clone.lock().unwrap().selected().unwrap() as u64;
+                                // TODO: make this work
+                                // println!("{}", s);
+                                // println!("{}", state.selected().unwrap());
+                            }
+                            PathInfo::File(..) => panic!(),
+                        }
+                        (*drawn_dir_access).pop();
+                        joined = contents_access.join(&*drawn_dir_access).unwrap();
+                        state_clone.lock().unwrap().select(match joined {
+                            PathInfo::Folder(.., s) => Some(*s as usize),
+                            PathInfo::File(..) => panic!(),
+                        });
+                    }
+                    Key::Char('r') => {
+                        let drawn_dir_clone = current_dir_clone.lock().unwrap().clone();
+                        let mut contents_access = (&contents_clone).lock().unwrap();
+                        let joined = contents_access.join(&drawn_dir_clone).unwrap();
+                        *joined = get_wrapped_contents(&mut join_path_to_vec(
+                            &starting_dir_clone.lock().unwrap(),
+                            drawn_dir_clone,
+                        ));
+                    }
+                    Key::Char('g') => state_clone.lock().unwrap().select(Some(0)),
+                    Key::Char('G') => {
+                        let dir_len = (&contents_clone)
+                            .lock()
+                            .unwrap()
+                            .join(&*current_dir_clone.lock().unwrap())
+                            .unwrap()
+                            .contents()
+                            .unwrap()
+                            .len();
+                        state_clone.lock().unwrap().select(Some(dir_len - 1));
+                    }
+                    _ => (),
+                }
+            }
+            _ => (),
+        };
+        draw();
     }
     write!(
         io::stdout().into_raw_mode().unwrap(),
@@ -372,9 +344,9 @@ fn get_starting_dir() -> Result<std::path::PathBuf, io::Error> {
         Ok(current_dir)
     } else if args.len() == 2 {
         if &args[1][0..0] != "/" {
-            Ok(std::fs::canonicalize(current_dir.join(&std::path::Path::new(&args[1]))).unwrap())
+            Ok(fs::canonicalize(current_dir.join(&std::path::Path::new(&args[1]))).unwrap())
         } else {
-            Ok(std::fs::canonicalize(std::path::PathBuf::from(&args[1])).unwrap())
+            Ok(fs::canonicalize(std::path::PathBuf::from(&args[1])).unwrap())
         }
     } else {
         Err(io::Error::new(io::ErrorKind::InvalidInput, ""))
@@ -392,7 +364,7 @@ fn get_contents(
     dir: &std::path::Path,
     threads: Arc<Mutex<usize>>,
     max_threads: usize,
-) -> Result<BTreeMap<std::ffi::OsString, PathInfo>, io::Error> {
+) -> Result<BTreeMap<OsString, PathInfo>, io::Error> {
     let contents = Arc::new(Mutex::new(BTreeMap::new()));
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -408,14 +380,12 @@ fn get_contents(
         let threads_depth_clone = Arc::clone(&threads);
         let task = move || {
             let safe_entry = entry.unwrap();
-            let metadata = std::fs::symlink_metadata(safe_entry.path()).unwrap();
+            let metadata = fs::symlink_metadata(safe_entry.path()).unwrap();
             if metadata.is_dir() {
                 let sub_contents =
                     get_contents(&safe_entry.path(), threads_depth_clone, max_threads).unwrap();
                 contents_clone.lock().unwrap().insert(
-                    std::ffi::OsString::from(
-                        safe_entry.path().components().last().unwrap().as_os_str(),
-                    ),
+                    OsString::from(safe_entry.path().components().last().unwrap().as_os_str()),
                     PathInfo::Folder(
                         sum_contents(&sub_contents) + metadata.len(),
                         sub_contents,
@@ -424,9 +394,7 @@ fn get_contents(
                 );
             } else {
                 contents_clone.lock().unwrap().insert(
-                    std::ffi::OsString::from(
-                        safe_entry.path().components().last().unwrap().as_os_str(),
-                    ),
+                    OsString::from(safe_entry.path().components().last().unwrap().as_os_str()),
                     PathInfo::File(metadata.len()),
                 );
             };
@@ -453,7 +421,7 @@ fn get_contents(
     Ok(Arc::try_unwrap(contents).unwrap().into_inner().unwrap())
 }
 
-fn sum_contents(contents: &BTreeMap<std::ffi::OsString, PathInfo>) -> u64 {
+fn sum_contents(contents: &BTreeMap<OsString, PathInfo>) -> u64 {
     contents.values().fold(0, |acc, x| acc + x.size())
 }
 
