@@ -237,9 +237,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .len();
                         if dir_len != 0 {
                             let new_state =
-                                (state_clone.lock().unwrap().selected().unwrap() as isize + 1)
-                                    .rem_euclid(dir_len as isize)
-                                    as usize;
+                                (((state_clone.lock().unwrap().selected().unwrap() as isize) + 1)
+                                    .max(0) as usize)
+                                    .min(dir_len - 1);
                             state_clone.lock().unwrap().select(Some(new_state));
                         }
                     }
@@ -254,9 +254,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .len();
                         if dir_len != 0 {
                             let new_state =
-                                (state_clone.lock().unwrap().selected().unwrap() as isize - 1)
-                                    .rem_euclid(dir_len as isize)
-                                    as usize;
+                                (((state_clone.lock().unwrap().selected().unwrap() as isize) - 1)
+                                    .max(0) as usize)
+                                    .min(dir_len - 1);
                             state_clone.lock().unwrap().select(Some(new_state));
                         }
                     }
