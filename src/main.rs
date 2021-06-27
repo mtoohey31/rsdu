@@ -263,7 +263,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Key::Char('l') | Key::Right => {
                         let mut drawn_dir_access = current_dir_clone.lock().unwrap();
                         let mut contents_access = (&contents_clone).lock().unwrap();
-                        let joined = contents_access.join(&*drawn_dir_access).unwrap();
+                        let mut joined = contents_access.join(&*drawn_dir_access).unwrap();
+                        match joined {
+                            PathInfo::Folder(.., ref mut s) => {
+                                *s = state_clone.lock().unwrap().selected().unwrap() as u64;
+                            }
+                            PathInfo::File(..) => panic!(),
+                        }
                         let sorted = joined.sorted().unwrap();
                         let (target_os_string, info) = sorted
                             .iter()
@@ -272,8 +278,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match info {
                             PathInfo::Folder(..) => {
                                 (*drawn_dir_access).push(OsString::from(target_os_string));
+                                joined = contents_access.join(&*drawn_dir_access).unwrap();
                                 state_clone.lock().unwrap().select(match joined {
-                                    PathInfo::Folder(.., mut l) => Some(l as usize),
+                                    PathInfo::Folder(_, _, s) => {
+                                        let new_state = *s as usize;
+                                        Some(new_state)
+                                    }
                                     PathInfo::File(..) => panic!(),
                                 });
                             }
@@ -287,9 +297,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match joined {
                             PathInfo::Folder(.., ref mut s) => {
                                 *s = state_clone.lock().unwrap().selected().unwrap() as u64;
-                                // TODO: make this work
-                                // println!("{}", s);
-                                // println!("{}", state.selected().unwrap());
                             }
                             PathInfo::File(..) => panic!(),
                         }
