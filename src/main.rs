@@ -220,7 +220,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         match event.unwrap() {
             termion::event::Event::Key(key) => {
                 match key {
-                    // TODO: implement ctrl + u and ctrl + d for quicker movement, e.g.: Key::Ctrl('h')
                     // TODO: implement deletion with confirmation
                     // TODO; implement trashing with the give `trash` command found on the shell's path
                     // TODO; implement selection and application of deletion and trashing commands
@@ -327,6 +326,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .unwrap()
                             .len();
                         state_clone.lock().unwrap().select(Some(dir_len - 1));
+                    }
+                    Key::Ctrl('d') | Key::Ctrl('f') => {
+                        let dir_len = (&contents_clone)
+                            .lock()
+                            .unwrap()
+                            .join(&*current_dir_clone.lock().unwrap())
+                            .unwrap()
+                            .contents()
+                            .unwrap()
+                            .len();
+                        if dir_len != 0 {
+                            let new_state = (((state_clone.lock().unwrap().selected().unwrap()
+                                as isize)
+                                + (termion::terminal_size().unwrap().1 as isize / 4))
+                                .max(0) as usize)
+                                .min(dir_len);
+                            state_clone.lock().unwrap().select(Some(new_state));
+                        }
+                    }
+                    Key::Ctrl('u') | Key::Ctrl('b') => {
+                        let dir_len = (&contents_clone)
+                            .lock()
+                            .unwrap()
+                            .join(&*current_dir_clone.lock().unwrap())
+                            .unwrap()
+                            .contents()
+                            .unwrap()
+                            .len();
+                        if dir_len != 0 {
+                            let new_state = (((state_clone.lock().unwrap().selected().unwrap()
+                                as isize)
+                                - (termion::terminal_size().unwrap().1 as isize / 4))
+                                .max(0) as usize)
+                                .min(dir_len);
+                            state_clone.lock().unwrap().select(Some(new_state));
+                        }
                     }
                     _ => (),
                 }
