@@ -21,7 +21,7 @@ use tui::Terminal;
 #[derive(Debug)]
 enum PathInfo {
     File(u64),
-    Folder(u64, BTreeMap<OsString, PathInfo>, u64),
+    Folder(u64, BTreeMap<OsString, PathInfo>, usize),
 }
 
 impl PathInfo {
@@ -266,7 +266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut joined = contents_access.join(&*drawn_dir_access).unwrap();
                         match joined {
                             PathInfo::Folder(.., ref mut s) => {
-                                *s = state_clone.lock().unwrap().selected().unwrap() as u64;
+                                *s = state_clone.lock().unwrap().selected().unwrap();
                             }
                             PathInfo::File(..) => panic!(),
                         }
@@ -296,7 +296,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut joined = contents_access.join(&*drawn_dir_access).unwrap();
                         match joined {
                             PathInfo::Folder(.., ref mut s) => {
-                                *s = state_clone.lock().unwrap().selected().unwrap() as u64;
+                                *s = state_clone.lock().unwrap().selected().unwrap();
                             }
                             PathInfo::File(..) => panic!(),
                         }
