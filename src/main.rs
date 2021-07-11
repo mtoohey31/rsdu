@@ -106,6 +106,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tx.send(0).unwrap();
     });
 
+    let starting_dir_clone = Arc::clone(&starting_dir);
+    let starting_dir_copy = starting_dir_clone.lock().unwrap().clone();
     let mut dot_pos = 0;
     let mut dot_fwd = true;
     loop {
@@ -122,7 +124,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .as_ref(),
                     )
                     .split(f.size());
-                let block = Block::default().title(" rsdu ").borders(Borders::ALL);
+                let display_dir_string = String::from(starting_dir_copy.to_string_lossy());
+                let block = Paragraph::new(display_dir_string)
+                    .block(Block::default().title(" rsdu ").borders(Borders::ALL));
                 f.render_widget(block, chunks[0]);
                 let blank1 = Block::default();
                 f.render_widget(blank1, chunks[1]);
