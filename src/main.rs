@@ -10,8 +10,11 @@ use std::{
     thread,
 };
 use termion::event::Key;
+use termion::input::MouseTerminal;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
+use termion::screen::AlternateScreen;
+use tui::backend::TermionBackend;
 use tui::layout::{Alignment, Constraint, Direction, Layout};
 use tui::style::{Color, Modifier, Style};
 use tui::text::{Span, Spans};
@@ -79,11 +82,11 @@ fn join_path_to_vec(path: &Path, vec: Vec<OsString>) -> PathBuf {
     tmp_path
 }
 
-// TODO: erase window on quit
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdout = io::stdout().into_raw_mode().unwrap();
-    write!(stdout, "{}", termion::clear::All).unwrap();
-    let backend = tui::backend::TermionBackend::new(stdout);
+    let stdout = io::stdout().into_raw_mode().unwrap();
+    let stdout = MouseTerminal::from(stdout);
+    let stdout = AlternateScreen::from(stdout);
+    let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend).unwrap();
 
     let starting_dir = match get_starting_dir() {
@@ -225,8 +228,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             termion::event::Event::Key(key) => {
                 match key {
                     // TODO: implement deletion with confirmation
-                    // TODO; implement trashing with the give `trash` command found on the shell's path
-                    // TODO; implement selection and application of deletion and trashing commands
+                    // TODO: implement trashing with the give `trash` command found on the shell's path
+                    // TODO: implement selection and application of deletion and trashing commands
                     // to all selected files
                     Key::Char('q') => break,
                     Key::Char('j') | Key::Down => {
