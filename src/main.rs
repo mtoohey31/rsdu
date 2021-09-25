@@ -1,3 +1,4 @@
+// TODO: Catch errors when scanning and display them to the user, then continue
 use std::{
     collections::BTreeMap,
     env,
