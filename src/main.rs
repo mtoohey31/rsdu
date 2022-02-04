@@ -1,4 +1,5 @@
 // TODO: Catch errors when scanning and display them to the user, then continue
+// TODO: Display scanning animation when refreshing too
 use std::{
     collections::BTreeMap,
     env,
