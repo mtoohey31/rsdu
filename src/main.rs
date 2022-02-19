@@ -379,12 +379,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         draw();
     }
-    write!(
-        io::stdout().into_raw_mode().unwrap(),
-        "{}",
-        termion::cursor::Show
-    )
-    .unwrap();
     Ok(())
 }
 
