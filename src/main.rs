@@ -226,7 +226,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_clone = Arc::clone(&state);
 
     let stdin = io::stdin();
-    let _dir = Arc::clone(&current_dir);
     for event in stdin.events() {
         match event.unwrap() {
             termion::event::Event::Key(key) => {
