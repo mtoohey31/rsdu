@@ -1,5 +1,7 @@
 // TODO: Catch errors when scanning and display them to the user, then continue
 // TODO: Display scanning animation when refreshing too
+// TODO: Allow specifying a command to print the size of a file instead of using disk usage
+// TODO: Add an argument parser to handle invalid input better
 use std::{
     collections::BTreeMap,
     env,
