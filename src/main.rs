@@ -10,17 +10,20 @@ use std::{
     sync::{Arc, Mutex},
     thread,
 };
-use termion::event::Key;
-use termion::input::MouseTerminal;
-use termion::input::TermRead;
-use termion::raw::IntoRawMode;
-use termion::screen::AlternateScreen;
-use tui::backend::TermionBackend;
-use tui::layout::{Alignment, Constraint, Direction, Layout};
-use tui::style::{Color, Modifier, Style};
-use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
-use tui::Terminal;
+use termion::{
+    event::Key,
+    input::{MouseTerminal, TermRead},
+    raw::IntoRawMode,
+    screen::AlternateScreen,
+};
+use tui::{
+    backend::TermionBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Span, Spans},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Terminal,
+};
 
 #[derive(Debug)]
 enum PathInfo {
